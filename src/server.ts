@@ -1,67 +1,125 @@
-import express from "express";
+import express, { NextFunction } from "express";
 import { Request, Response } from "express";
-import { Pool } from "pg";
-import dotenv from "dotenv";
-import path from "path"
 
-
-dotenv.config({path: path.join(process.cwd(), ".env")});
+import config from "./config";
+import initDB, { pool } from "./config/db";
+import logger from "./middleware/logger";
+import { userRouter } from "./modules/user/user.routes";
+import { todoRouter } from "./modules/todo/todo.routes";
+import { authRouter } from "./modules/auth/auth.routes";
 
 
 const app = express();
-const port = 5000;
+const port = config.port;
 
 //parser
 app.use(express.json());
 // app.use(express.json());
 
-//!>>> DB
-const pool = new Pool({
-  connectionString: `${process.env.connection_str}`,
-});
-
-const initDB = async () => {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users(
-      id SERIAL PRIMARY KEY,
-      name VARCHAR(100) NOT NULL,
-      email VARCHAR(150) UNIQUE NOT NULL,
-      age INT,
-      phone VARCHAR(15),
-      address TEXT,
-      created_at TIMESTAMP DEFAULT NOW(),
-      updated_at TIMESTAMP DEFAULT NOW()
-    )
-    `);
-  
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS todos(
-        id SERIAL PRIMARY KEY,
-        user_id INT REFERENCES users(id) ON DELETE CASCADE,
-        title VARCHAR(200) NOT NULL,
-        description TEXT,
-        completed BOOLEAN DEFAULT false,
-        due_date DATE,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-      )
-      `)
-}
-
-initDB()
+//auth routes
+app.use("/auth", authRouter)
 
 
+//initializing Database
+initDB();
 
-app.get("/", (req: Request, res: Response) => {
+
+app.get("/",logger, (req: Request, res: Response) => {
   res.send('Hello World!');
 })
 
-app.post("/", (req: Request, res: Response) => {
-  console.log(req.body);
+//! users CRUD (create, read, update, delete)
 
-  res.status(201).json({
-    success: true,
-    message: 'API is working'
+app.use("/users",userRouter)
+
+
+
+//! todos
+//>>>>>>>>>>>>>>>>>create todos
+app.use("/todos",todoRouter)
+
+//>>>>>>>>>>>>>>>>>get all todos 
+app.get("/todos", async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query(`
+      SELECT * FROM todos 
+      `);
+    res.status(200).json({
+      success: true,
+      message: "todos retrieved successfully",
+      data: result.rows
+    })
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      message: err.message,
+      details: err
+    })
+  }
+});
+
+//>>>>>>>>>>>>>>>>>get single todo 
+app.get("/todos/:id", async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query(`
+      SELECT * FROM todos WHERE id =$1`, [req.params.id])
+    if (result.rows.length === 0) {
+      res.status(404).json({
+        success: false,
+        message: 'todo not found'
+      })
+    } else {
+      res.status(200).json({
+        success:true,
+        message: "Todo fetched successfully",
+        data: result.rows[0]
+      })
+    }
+  }
+  catch (err: any) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    })
+  }
+
+})
+
+
+//>>>>>>>>>>>>>>>>update single todo
+app.put("/todos/:id", async (req: Request, res: Response) => {
+  // console.log(req.params.id);
+  const {title, completed} = req.body;
+  try {
+    const result = await pool.query(`UPDATE todos SET title=$1,completed=$2 WHERE id=$3 RETURNING *`,[title,completed,req.params.id]);
+    if (result.rows.length === 0) {
+      res.status(404).json({
+        success: false,
+        message: 'user not found'
+      })
+    } else {
+      res.status(200).json({
+        success:true,
+        message: "Todo updated successfully",
+        data: result.rows[0]
+      })
+    }
+  }
+  catch (err: any) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    })
+  }
+
+})
+
+//!>>>>>>>>>>>>>>>auto catch error (route not found)
+app.use((req,res)=>{
+  res.status(404).json({
+    success: false,
+    message:"Route not found",
+    path: req.path
   })
 })
 
